@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I love you</title>
+<style>
+  :root { --pink: #ff7eb6; --glow: rgba(255, 105, 180, .8); }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #000; overflow: hidden; }
+  body { display: flex; flex-direction: column; color: var(--pink); font-family: "Courier New", monospace; }
+  #stage { flex: 1; min-height: 0; width: 100%; }
+  #stage canvas { display: block; }
+  .footer { padding: 0 12px 4vh; text-align: center; }
+  .tagline {
+    letter-spacing: .12em; font-size: clamp(14px, 4vw, 22px);
+    text-shadow: 0 0 10px var(--glow); animation: fadeIn 3s ease both;
+  }
+  .tagline small { display: block; margin-top: 8px; font-size: .7em; opacity: .8; letter-spacing: .2em; }
+  .song {
+    margin-top: 2vh; font-size: clamp(11px, 3vw, 15px); letter-spacing: .15em;
+    text-shadow: 0 0 8px var(--glow); animation: fadeIn 4s ease both, glowPulse 2.5s ease-in-out 4s infinite;
+  }
+  @keyframes glowPulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+<div id="stage"></div>
+
+<div class="footer">
+  <p class="tagline">see the world from my view<small>— سناء —</small></p>
+  <p class="song">♫ Love Me Like You Do · Ellie Goulding</p>
+</div>
+
+<script>
+
+window.onerror = function (m) { var d = document.createElement('div'); d.style.cssText = 'position:fixed;top:8px;left:8px;right:8px;color:#fff;font:12px monospace;z-index:9'; d.textContent = 'Error: ' + m; document.body.appendChild(d); };
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 1);
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+
+// ---------- text texture: 4 rows of "I love you" ----------
+const CW = 2048, CH = 1024, ROWS = 4, ROW_H = CH / ROWS;
+const cv = document.createElement('canvas');
+cv.width = CW; cv.height = CH;
+const ctx = cv.getContext('2d');
+ctx.fillStyle = '#000';
+ctx.fillRect(0, 0, CW, CH);
+ctx.font = 'bold 120px "Courier New", monospace';
+ctx.textBaseline = 'middle';
+ctx.fillStyle = '#ff7eb6';
+ctx.shadowColor = 'rgba(255,105,180,0.9)';
+ctx.shadowBlur = 14;
+const unit = 'I love you   ';
+const unitW = ctx.measureText(unit).width;
+const reps = Math.round(CW / unitW);          // whole number so the texture tiles seamlessly
+ctx.font = `bold ${Math.floor(120 * (CW / reps) / unitW)}px "Courier New", monospace`;
+const line = unit.repeat(reps);
+for (let r = 0; r < ROWS; r++) {
+  const y = r * ROW_H + ROW_H / 2;
+  ctx.fillText(line, 0, y);
+}
+const tex = new THREE.CanvasTexture(cv);
+tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+// ---------- heart wall geometry ----------
+const SCALE = 0.1, WALL_H = 1.7, M = 480;
+function heart(t) {
+  return {
+    x: 16 * Math.pow(Math.sin(t), 3) * SCALE,
+    y: (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t) + 2.5) * SCALE
+  };
+}
+const pts = [], cum = [0];
+for (let i = 0; i <= M; i++) {
+  const p = heart((i / M) * Math.PI * 2);
+  pts.push(p);
+  if (i) cum.push(cum[i - 1] + Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y));
+}
+const total = cum[M];
+const worldTexW = (CW / ROW_H) * (WALL_H / ROWS);   // keeps letters un-stretched
+const repeatX = total / worldTexW;
+
+const pos = [], uv = [], idx = [];
+for (let i = 0; i <= M; i++) {
+  const p = pts[i], u = cum[i] / total;
+  pos.push(p.x, p.y, -WALL_H / 2);  uv.push(u, 0);
+  pos.push(p.x, p.y,  WALL_H / 2);  uv.push(u, 1);
+  if (i < M) {
+    const a = i * 2;
+    idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  }
+}
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+geo.setIndex(idx);
+
+const mat = new THREE.ShaderMaterial({
+  uniforms: { map: { value: tex }, time: { value: 0 }, repeatX: { value: repeatX } },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    uniform sampler2D map; uniform float time; uniform float repeatX;
+    varying vec2 vUv;
+    void main() {
+      vec2 p = vec2(vUv.x * repeatX, vUv.y + time * 0.10);   // words slide along the wall
+      vec4 c = texture2D(map, p);
+      float fade = smoothstep(0.0, 0.16, vUv.y) * (1.0 - smoothstep(0.84, 1.0, vUv.y));
+      gl_FragColor = vec4(c.rgb * fade * 1.25, 1.0);
+    }`,
+  side: THREE.DoubleSide,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false
+});
+
+const group = new THREE.Group();
+group.add(new THREE.Mesh(geo, mat));
+scene.add(group);
+
+// ---------- layout ----------
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  const needW = 4.6;                                   // world width we want visible
+  const visibleAtDist = (d) => 2 * d * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  let d = 8;
+  const wAt = visibleAtDist(d) * camera.aspect;
+  if (wAt < needW) d = d * needW / wAt;
+  camera.position.set(0, 0, d);
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- animate ----------
+const clock = new THREE.Clock();
+function frame() {
+  const t = clock.getElapsedTime();
+  mat.uniforms.time.value = t;
+  group.rotation.y = Math.sin(t * 0.55) * 1.05;        // sway left and right (~60 degrees)
+  group.rotation.x = Math.sin(t * 0.37) * 0.14 - 0.06;
+  const beat = 1 + 0.012 * Math.sin(t * 3);
+  group.scale.set(beat, beat, beat);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
